@@ -7,6 +7,7 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using System.Text.RegularExpressions;
 
 namespace CPFValidation
 {
@@ -17,78 +18,99 @@ namespace CPFValidation
             [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req,
             ILogger log)
         {
-            log.LogInformation("Starting CPF validation.");
+            log.LogInformation("CPF validation request received.");
 
-            string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-            dynamic data = JsonConvert.DeserializeObject(requestBody);
-            
-            if (data == null)
+            try
             {
-                return new BadRequestObjectResult("Please provide a CPF.");
-            }
+                // Read and parse the request body
+                string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+                dynamic data = JsonConvert.DeserializeObject(requestBody);
 
-            string cpf = data?.cpf;
+                // Validate input
+                if (data == null || string.IsNullOrEmpty(data?.cpf?.ToString()))
+                {
+                    return new BadRequestObjectResult("CPF is required.");
+                }
 
-            if (IsValidCPF(cpf))
-            {
+                string cpf = data.cpf.ToString();
+
+                // Validate CPF format and digits
+                if (!IsValidCPF(cpf))
+                {
+                    return new BadRequestObjectResult("Invalid CPF.");
+                }
+
                 return new OkObjectResult("Valid CPF.");
             }
-            else
+            catch (Exception ex)
             {
-                return new BadRequestObjectResult("Invalid CPF.");
+                log.LogError($"An error occurred: {ex.Message}");
+                return new StatusCodeResult(StatusCodes.Status500InternalServerError);
             }
         }
 
-        public static bool IsValidCPF(string cpf)
+        private static bool IsValidCPF(string cpf)
         {
-            if (string.IsNullOrEmpty(cpf))
-                return false;
+            // Remove non-numeric characters
+            cpf = Regex.Replace(cpf, @"[^\d]", "");
 
-            cpf = cpf.Replace(".", "").Replace("-", "");
-
-            if (cpf.Length != 11)
-                return false;
-
-            // Check if all digits are the same
-            bool allDigitsSame = true;
-            for (int i = 1; i < 11 && allDigitsSame; i++)
+            // Basic validation
+            if (cpf.Length != 11 || !long.TryParse(cpf, out _))
             {
-                if (cpf[i] != cpf[0])
-                    allDigitsSame = false;
+                return false;
             }
 
-            if (allDigitsSame || cpf == "12345678909")
+            // Check for repeated digits or known invalid CPFs
+            if (IsRepeatedDigits(cpf) || cpf == "12345678909")
+            {
                 return false;
+            }
 
+            // Calculate and validate check digits
             int[] firstMultiplier = { 10, 9, 8, 7, 6, 5, 4, 3, 2 };
             int[] secondMultiplier = { 11, 10, 9, 8, 7, 6, 5, 4, 3, 2 };
 
             string tempCpf = cpf.Substring(0, 9);
-            int sum = 0;
-
-            for (int i = 0; i < 9; i++)
-            {
-                sum += int.Parse(tempCpf[i].ToString()) * firstMultiplier[i];
-            }
-
-            int remainder = sum % 11;
-            remainder = remainder < 2 ? 0 : 11 - remainder;
+            int sum = CalculateSum(tempCpf, firstMultiplier);
+            int remainder = CalculateRemainder(sum);
 
             string digit = remainder.ToString();
-            tempCpf = tempCpf + digit;
-            sum = 0;
+            tempCpf += digit;
 
-            for (int i = 0; i < 10; i++)
-            {
-                sum += int.Parse(tempCpf[i].ToString()) * secondMultiplier[i];
-            }
+            sum = CalculateSum(tempCpf, secondMultiplier);
+            remainder = CalculateRemainder(sum);
 
-            remainder = sum % 11;
-            remainder = remainder < 2 ? 0 : 11 - remainder;
-
-            digit = digit + remainder.ToString();
+            digit += remainder.ToString();
 
             return cpf.EndsWith(digit);
+        }
+
+        private static bool IsRepeatedDigits(string cpf)
+        {
+            for (int i = 1; i < cpf.Length; i++)
+            {
+                if (cpf[i] != cpf[0])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static int CalculateSum(string input, int[] multipliers)
+        {
+            int sum = 0;
+            for (int i = 0; i < multipliers.Length; i++)
+            {
+                sum += int.Parse(input[i].ToString()) * multipliers[i];
+            }
+            return sum;
+        }
+
+        private static int CalculateRemainder(int sum)
+        {
+            int remainder = sum % 11;
+            return remainder < 2 ? 0 : 11 - remainder;
         }
     }
 }
