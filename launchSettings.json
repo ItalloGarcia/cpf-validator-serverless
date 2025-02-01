@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "CPFValidationFunction": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7211",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "http://localhost:7211"
+    }
+  }
+}
